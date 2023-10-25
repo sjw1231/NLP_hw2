@@ -17,6 +17,7 @@ class LSTMModel(nn.Module):
         self.embeddingDim = embeddingDim
         self.hiddenDim = hiddenDim
         self.numLayers = numLayers
+        self.device: torch.device
     
         self.embedding = nn.Embedding(vocabSize, embeddingDim)
         self.dropout = nn.Dropout(0.1)
@@ -44,5 +45,5 @@ class LSTMModel(nn.Module):
         return x, h, c
     
     def initHidden(self, batchSize):
-        return (torch.zeros(self.numLayers, batchSize, self.hiddenDim),
-                torch.zeros(self.numLayers, batchSize, self.hiddenDim))
+        return (torch.zeros(self.numLayers, batchSize, self.hiddenDim, device=self.device),
+                torch.zeros(self.numLayers, batchSize, self.hiddenDim, device=self.device))

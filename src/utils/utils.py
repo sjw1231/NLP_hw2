@@ -1,3 +1,5 @@
+import torch
+from tqdm import tqdm
 from ..data.tokenizer import Tokenizer
 from .. import EMBEDDING_6B_PATH, EMBEDDING_42B_PATH
 
@@ -21,7 +23,7 @@ def readEmbedding(path: str, tokenizer: Tokenizer):
     """
     with open(path, "r") as f:
         embeddings = {}
-        for line in f:
+        for line in tqdm(f):
             line = line.split()
             word = line[0]
             embedding = line[1:]
@@ -39,3 +41,10 @@ def getEmbeddingPath(scale: int, embeddingDim: int):
         return EMBEDDING_6B_PATH.format(embeddingDim)
     else:
         return EMBEDDING_42B_PATH.format(embeddingDim)
+    
+def calculatePPL(output: torch.Tensor, target: torch.Tensor):
+    probs = torch.softmax(output, dim=-1)
+    logProbs = torch.log(probs) # [batchSize, sequenceLength, vocabSize]
+    entropy = torch.gather(logProbs, dim=-1, index=target.unsqueeze(-1)).squeeze(-1) # [batchSize, sequenceLength]
+    ppl = torch.exp(-entropy.mean(dim=-1)) # [batchSize]
+    return ppl

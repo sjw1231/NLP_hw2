@@ -1,19 +1,22 @@
+import os
 import sys
 import torch
 from tqdm import tqdm
 from loguru import logger
 from typing import Union
 from torch.optim import Adam
-from src import EMBEDDING_PATH
 from src.data.tokenizer import Tokenizer
 from src.data.dataloader import ContinuousDataLoader, ShuffledDataLoader
-from src.utils import readData, readEmbedding, getEmbeddingPath
+from src.utils import readData, readEmbedding, getEmbeddingPath, calculatePPL
 from src.models.LSTM import LSTMModel
 
-def train(model: torch.nn.Module, trainDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int, numEpochs: int):
+def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], validDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int, numEpochs: int):
+    bestValidPPL = float("inf")
     for epoch in range(numEpochs):
         predict(model, tokenizer)
         model.train()
+        lossList = []
+        pplList = []
         if batchCase == 3:
             h, c = model.initHidden(trainDataLoader.batchSize)
         with tqdm(total=len(trainDataLoader)) as pbar:
@@ -21,6 +24,8 @@ def train(model: torch.nn.Module, trainDataLoader: Union[ContinuousDataLoader, S
             for batch in trainDataLoader:
                 optimizer.zero_grad()
                 x, y = batch
+                x = x.to(model.device)
+                y = y.to(model.device)
                 if batchCase != 3:
                     h, c = model.initHidden(x.shape[0])
                 output, h, c = model(x, h, c)
@@ -28,12 +33,59 @@ def train(model: torch.nn.Module, trainDataLoader: Union[ContinuousDataLoader, S
                 loss.backward()
                 optimizer.step()
                 # logger.info(f"Loss: {loss.item()}")
-                pbar.update(1)
-                pbar.set_postfix(loss=loss.item())
+                lossList.append(loss.item())
                 
+                ppl = calculatePPL(output, y)
+                pplList.append(ppl.detach().cpu())
+                
+                pbar.update(1)
+                pbar.set_postfix(loss=loss.item(), ppl=ppl.mean().item())
+                
+        logger.info(f"Average training loss: {sum(lossList) / len(lossList)}")
+        pplList = torch.cat(pplList)
+        logger.info(f"Average training ppl: {torch.mean(pplList).item()}")
+        
+        validPPL = evaluate(model, validDataLoader, criterion, tokenizer, batchCase)
+        if validPPL < bestValidPPL:
+            bestValidPPL = validPPL
+            torch.save(model.state_dict(), "checkpoint/lstm.best.pt")
+            logger.success("Model saved")
+        
     predict(model, tokenizer)
 
-def predict(model: torch.nn.Module, tokenizer: Tokenizer):
+@torch.no_grad()
+def evaluate(model: LSTMModel, dataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int):
+    model.eval()
+    
+    lossList = []
+    pplList = []
+    if batchCase == 3:
+        h, c = model.initHidden(dataLoader.batchSize)
+    with tqdm(total=len(dataLoader)) as pbar:
+        pbar.set_description(f"Validation")
+        for batch in dataLoader:
+            x, y = batch
+            x = x.to(model.device)
+            y = y.to(model.device)
+            if batchCase != 3:
+                h, c = model.initHidden(x.shape[0])
+            output, h, c = model(x, h, c)
+            loss: torch.Tensor = criterion(output.view(-1, len(tokenizer)), y.view(-1))
+            lossList.append(loss.item())
+            
+            ppl = calculatePPL(output, y)
+            pplList.append(ppl.detach().cpu())
+            
+            pbar.update(1)
+            pbar.set_postfix(loss=loss.item(), ppl=ppl.mean().item())
+            
+    logger.info(f"Average validation loss: {sum(lossList) / len(lossList)}")
+    pplList = torch.cat(pplList)
+    logger.info(f"Average validation ppl: {torch.mean(pplList).item()}")
+    return torch.mean(pplList).item()
+
+@torch.no_grad()
+def predict(model: LSTMModel, tokenizer: Tokenizer):
     model.eval()
     text = "the magazine will reward with"
     
@@ -41,6 +93,7 @@ def predict(model: torch.nn.Module, tokenizer: Tokenizer):
         if text.split()[-1] == "<eos>" or len(text.split()) > 15:
             break
         input = torch.tensor(tokenizer(text.lower()), dtype=torch.long)[None, :]
+        input = input.to(model.device)
         h, c = model.initHidden(input.shape[0])
         output, h, c = model(input, h, c)
         logit = output[0, -1, :]
@@ -59,12 +112,15 @@ def main():
     
     batchSize = 4
     sequenceLength = 128
-    embeddingDim = 50
+    embeddingDim = 300
     hiddenDim = 256
     numLayers = 4
     learningRate = 0.0005
     numEpochs = 10
     embeddingScale = 6
+    cudaID = 7
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(cudaID)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     trainPath = "data/penn-treebank/ptb.train.txt"
     validPath = "data/penn-treebank/ptb.valid.txt"
@@ -93,16 +149,21 @@ def main():
         testDataLoader = ShuffledDataLoader(tokenizedTestData, batchSize, sequenceLength)
     
     model = LSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers)
+    model.to(device)
+    model.device = device
     logger.info(model)
     embeddings = readEmbedding(getEmbeddingPath(embeddingScale, embeddingDim), tokenizer)
     logger.success("Embedding read")
-    model.loadEmbedding(embeddings)
+    # model.loadEmbedding(embeddings)
     logger.success("Embedding loaded")
     
     optimizer = Adam(model.parameters(), lr=learningRate)
     criterion = torch.nn.CrossEntropyLoss()
     
-    train(model, trainDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs)
+    train(model, trainDataLoader, validDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs)
+    
+    model.load_state_dict(torch.load("checkpoint/lstm.best.pt"))
+    evaluate(model, testDataLoader, criterion, tokenizer, batchCase)
     
 if __name__ == "__main__":
     main()

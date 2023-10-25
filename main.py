@@ -36,6 +36,7 @@ def train(model: torch.nn.Module, trainDataLoader: Union[ContinuousDataLoader, S
 def predict(model: torch.nn.Module, tokenizer: Tokenizer):
     model.eval()
     text = "the magazine will reward with"
+    
     while True:
         if text.split()[-1] == "<eos>" or len(text.split()) > 15:
             break

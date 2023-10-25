@@ -6,10 +6,11 @@ import copy
 from typing import List
 
 class ShuffledDataLoader():
-    def __init__(self, data: List[int], batchSize: int, seqLen: int):
+    def __init__(self, data: List[int], batchSize: int, seqLen: int, shuffle: bool = True):
         self.data = data
         self.batchSize = batchSize
         self.seqLen = seqLen
+        self.shuffle = shuffle
         self.numBatches = (len(data) - 1) // (batchSize * seqLen)
         
     def __iter__(self):
@@ -17,7 +18,8 @@ class ShuffledDataLoader():
         for i in range(self.numBatches * self.batchSize):
             dataSeq.append(self.data[i * self.seqLen : (i + 1) * self.seqLen + 1])
         logger.debug(f"dataSeq: {len(dataSeq)} * {len(dataSeq[0])}")
-        random.shuffle(dataSeq)
+        if self.shuffle:
+            random.shuffle(dataSeq)
         
         for i in range(self.numBatches):
             input = []

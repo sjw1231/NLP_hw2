@@ -5,12 +5,13 @@ import copy
 from typing import List
 
 class ContinuousDataLoader():
-    def __init__(self, data: List[int], batchSize: int, seqLen: int, eosToken: int = 0):
+    def __init__(self, data: List[int], batchSize: int, seqLen: int, eosToken: int = 0, shuffle: bool = True):
         # super().__init__(dataset=data, batch_size=batchSize, shuffle=False, drop_last=True)
         self.data = data
         self.batchSize = batchSize
         self.seqLen = seqLen
         self.eosToken = eosToken
+        self.shuffle = shuffle
         self.numBatches = (len(data) - 1) // (batchSize * seqLen)
         self.dataSentence = []
         sentence = []
@@ -22,7 +23,8 @@ class ContinuousDataLoader():
         
     def __iter__(self):
         dataSentence = copy.deepcopy(self.dataSentence)
-        random.shuffle(dataSentence)
+        if self.shuffle:
+            random.shuffle(dataSentence)
         data = [token for sentence in dataSentence for token in sentence]
         data = data[: self.numBatches * self.batchSize * self.seqLen + 1]
         lenSen = self.seqLen * self.numBatches

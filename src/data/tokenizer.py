@@ -16,9 +16,11 @@ class Tokenizer:
                     word = '<num>'
                 self.vocab.add(word)
         self.vocab_size = len(self.vocab)
+        self.vocab = sorted(self.vocab)
         self.word2idx = {word: idx for idx, word in enumerate(self.vocab)}
         self.idx2word = {idx: word for idx, word in enumerate(self.vocab)}
         self.eosToken = self.word2idx["<eos>"]
+        self.vocab = set(self.vocab)
 
     def tokenize(self, sentence: Union[List[str], str]) -> List[int]:
         if isinstance(sentence, str):

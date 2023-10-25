@@ -13,7 +13,7 @@ from src.models.LSTM import LSTMModel
 def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], validDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int, numEpochs: int):
     bestValidPPL = float("inf")
     for epoch in range(numEpochs):
-        predict(model, tokenizer)
+        predict(model, tokenizer, "you want to eat a")
         model.train()
         lossList = []
         pplList = []
@@ -27,8 +27,8 @@ def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, Shuffle
                 x = x.to(model.device)
                 y = y.to(model.device)
                 if batchCase != 3:
-                    h, c = model.initHidden(x.shape[0])
-                output, h, c = model(x, h, c)
+                    h, c = model.initHidden(trainDataLoader.batchSize)
+                output, h, c = model(x, h.detach(), c.detach())
                 loss: torch.Tensor = criterion(output.view(-1, len(tokenizer)), y.view(-1))
                 loss.backward()
                 optimizer.step()
@@ -51,10 +51,10 @@ def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, Shuffle
             torch.save(model.state_dict(), "checkpoint/lstm.best.pt")
             logger.success("Model saved")
         
-    predict(model, tokenizer)
+    predict(model, tokenizer, "you want to eat a")
 
 @torch.no_grad()
-def evaluate(model: LSTMModel, dataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int):
+def evaluate(model: LSTMModel, dataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int, test: bool = False):
     model.eval()
     
     lossList = []
@@ -62,7 +62,10 @@ def evaluate(model: LSTMModel, dataLoader: Union[ContinuousDataLoader, ShuffledD
     if batchCase == 3:
         h, c = model.initHidden(dataLoader.batchSize)
     with tqdm(total=len(dataLoader)) as pbar:
-        pbar.set_description(f"Validation")
+        if test:
+            pbar.set_description(f"Testing")
+        else:
+            pbar.set_description(f"Validation")
         for batch in dataLoader:
             x, y = batch
             x = x.to(model.device)
@@ -78,16 +81,21 @@ def evaluate(model: LSTMModel, dataLoader: Union[ContinuousDataLoader, ShuffledD
             
             pbar.update(1)
             pbar.set_postfix(loss=loss.item(), ppl=ppl.mean().item())
-            
+    
+    if test:
+        logger.info(f"Average testing loss: {sum(lossList) / len(lossList)}")
+        pplList = torch.cat(pplList)
+        logger.info(f"Average testing ppl: {torch.mean(pplList).item()}")
+        return torch.mean(pplList).item()
+    
     logger.info(f"Average validation loss: {sum(lossList) / len(lossList)}")
     pplList = torch.cat(pplList)
     logger.info(f"Average validation ppl: {torch.mean(pplList).item()}")
     return torch.mean(pplList).item()
 
 @torch.no_grad()
-def predict(model: LSTMModel, tokenizer: Tokenizer):
+def predict(model: LSTMModel, tokenizer: Tokenizer, text: str = None):
     model.eval()
-    text = "the magazine will reward with"
     
     while True:
         if text.split()[-1] == "<eos>" or len(text.split()) > 15:
@@ -106,9 +114,11 @@ def main():
     logger.add(sys.stderr, level="INFO")
     logger.add(f"log/lstmTest" + "_{time:YYYY-MM-DD:HH:mm:ss}.log", rotation="500 MB", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
     
-    batchCase = 1 # Use shuffled batching, and set the first hidden state as a zero vector.
+    evalOnly = False
+    
+    # batchCase = 1 # Use shuffled batching, and set the first hidden state as a zero vector.
     # batchCase = 2 # Use continuous batching, and set the first hidden state as a zero vector.
-    # batchCase = 3 # Use continuous batching, and use the last hidden state of the previous batch as the first hidden state of the current batch.
+    batchCase = 3 # Use continuous batching, and use the last hidden state of the previous batch as the first hidden state of the current batch.
     
     batchSize = 4
     sequenceLength = 128
@@ -116,7 +126,7 @@ def main():
     hiddenDim = 256
     numLayers = 4
     learningRate = 0.0005
-    numEpochs = 10
+    numEpochs = 30
     embeddingScale = 6
     cudaID = 7
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cudaID)
@@ -140,30 +150,33 @@ def main():
     logger.success("Tokenization finished")
 
     if batchCase == 1:
-        trainDataLoader = ContinuousDataLoader(tokenizedTrainData, batchSize, sequenceLength, tokenizer.eosToken)
-        validDataLoader = ContinuousDataLoader(tokenizedValidData, batchSize, sequenceLength, tokenizer.eosToken)
-        testDataLoader = ContinuousDataLoader(tokenizedTestData, batchSize, sequenceLength, tokenizer.eosToken)
+        trainDataLoader = ContinuousDataLoader(tokenizedTrainData, batchSize, sequenceLength, tokenizer.eosToken, shuffle=True)
+        validDataLoader = ContinuousDataLoader(tokenizedValidData, batchSize, sequenceLength, tokenizer.eosToken, shuffle=False)
+        testDataLoader = ContinuousDataLoader(tokenizedTestData, batchSize, sequenceLength, tokenizer.eosToken, shuffle=False)
     else:
-        trainDataLoader = ShuffledDataLoader(tokenizedTrainData, batchSize, sequenceLength)
-        validDataLoader = ShuffledDataLoader(tokenizedValidData, batchSize, sequenceLength)
-        testDataLoader = ShuffledDataLoader(tokenizedTestData, batchSize, sequenceLength)
+        trainDataLoader = ShuffledDataLoader(tokenizedTrainData, batchSize, sequenceLength, shuffle=True)
+        validDataLoader = ShuffledDataLoader(tokenizedValidData, batchSize, sequenceLength, shuffle=False)
+        testDataLoader = ShuffledDataLoader(tokenizedTestData, batchSize, sequenceLength, shuffle=False)
     
     model = LSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers)
     model.to(device)
     model.device = device
     logger.info(model)
-    embeddings = readEmbedding(getEmbeddingPath(embeddingScale, embeddingDim), tokenizer)
-    logger.success("Embedding read")
-    # model.loadEmbedding(embeddings)
-    logger.success("Embedding loaded")
-    
-    optimizer = Adam(model.parameters(), lr=learningRate)
     criterion = torch.nn.CrossEntropyLoss()
     
-    train(model, trainDataLoader, validDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs)
+    if not evalOnly:
+        embeddings = readEmbedding(getEmbeddingPath(embeddingScale, embeddingDim), tokenizer)
+        logger.success("Embedding read")
+        model.loadEmbedding(embeddings)
+        logger.success("Embedding loaded")
+        
+        optimizer = Adam(model.parameters(), lr=learningRate)
+        
+        train(model, trainDataLoader, validDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs)
     
     model.load_state_dict(torch.load("checkpoint/lstm.best.pt"))
-    evaluate(model, testDataLoader, criterion, tokenizer, batchCase)
+    evaluate(model, testDataLoader, criterion, tokenizer, batchCase, test=True)
+    predict(model, tokenizer, "you want to eat a")
     
 if __name__ == "__main__":
     main()

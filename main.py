@@ -1,9 +1,11 @@
 import os
 import sys
 import torch
+import random
+import torch.nn as nn
 from tqdm import tqdm
 from loguru import logger
-from typing import Union
+from typing import Union, List
 from argparse import ArgumentParser
 from torch.optim import Adam
 import matplotlib.pyplot as plt
@@ -135,7 +137,7 @@ def evaluate(model: LSTMModel, dataLoader: Union[ContinuousDataLoader, ShuffledD
     return meanLoss, meanPPL
 
 @torch.no_grad()
-def predict(model: LSTMModel, tokenizer: Tokenizer, text: str = None):
+def predict(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, text: str = None):
     model.eval()
     
     while True:
@@ -149,6 +151,35 @@ def predict(model: LSTMModel, tokenizer: Tokenizer, text: str = None):
         prediction = torch.argmax(logit).item()
         text += ' ' + tokenizer.detokenize(prediction)
     logger.info(f"Prediction: {text}")
+    
+def generate(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, testPath: str):
+    with open(testPath, 'r') as f:
+        testData = f.read().split('\n')
+    testData = [sentence.split() for sentence in testData]
+    testData = [sentence[:5] for sentence in testData if len(sentence) >= 5]
+    testData = [' '.join(sentence) for sentence in testData]
+    testData = [tokenizer(sentence) for sentence in testData]
+    
+    genData = []
+    for sentence in tqdm(testData):
+        while True:
+            if sentence[-1] == tokenizer.eosToken or len(sentence) >= 20:
+                break
+            input = torch.tensor(sentence, dtype=torch.long)[None, :]
+            input = input.to(model.device)
+            h = model.initHidden(input.shape[0])
+            output, h = model(input, h)
+            logits = output[0, -1, :]
+            value, indice = torch.topk(logits, 40)
+            value = torch.softmax(value, dim=0)
+            # random sample from `indice` with probabilities `value`
+            predictID = torch.multinomial(value, 1).item()
+            sentence.append(indice[predictID].item())
+        sentence = sentence[:-1] if sentence[-1] == tokenizer.eosToken else sentence
+        genData.append(tokenizer.detokenize(sentence))
+    
+    with open("data/penn-treebank/ptb.test.gen.txt", 'w') as f:
+        f.write('\n'.join(genData))
 
 def getParsedArgs():
     parser = ArgumentParser()
@@ -260,6 +291,7 @@ def main():
         model.load_state_dict(torch.load(f"checkpoint/lstm_case{batchCase}.best.pt"))
     evaluate(model, testDataLoader, criterion, tokenizer, batchCase, test=True)
     predict(model, tokenizer, "you want to eat a")
+    generate(model, tokenizer, testPath)
     
 if __name__ == "__main__":
     main()

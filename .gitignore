@@ -1,6 +1,7 @@
 data/*
 !src/data
 checkpoint/*
+img/*
 embeddings/*
 log
 __pycache__

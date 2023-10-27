@@ -35,14 +35,14 @@ class LSTMModel(nn.Module):
         for id, embedding in embeddings.items():
             self.embedding.weight.data[id] = torch.tensor(embedding)
     
-    def forward(self, x, h, c):
+    def forward(self, x, h: tuple):
         x = self.embedding(x)
         x = self.dropout(x)
         x = self.activation(x)
-        x, (h, c) = self.lstm(x, (h, c))
+        x, h = self.lstm(x, h)
         # h = (h_n, c_n). To deal with understanding tasks, we usually use h_n's last layer, which is h[0][:, -1, :]. For this generation task, since output is of same shape as input, we use x directly.
         x = self.linear(x)
-        return x, h, c
+        return x, h
     
     def initHidden(self, batchSize):
         return (torch.zeros(self.numLayers, batchSize, self.hiddenDim, device=self.device),

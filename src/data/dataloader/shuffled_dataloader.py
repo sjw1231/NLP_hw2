@@ -17,7 +17,7 @@ class ShuffledDataLoader():
         dataSeq = []
         for i in range(self.numBatches * self.batchSize):
             dataSeq.append(self.data[i * self.seqLen : (i + 1) * self.seqLen + 1])
-        logger.debug(f"dataSeq: {len(dataSeq)} * {len(dataSeq[0])}")
+        # logger.debug(f"dataSeq: {len(dataSeq)} * {len(dataSeq[0])}")
         if self.shuffle:
             random.shuffle(dataSeq)
         

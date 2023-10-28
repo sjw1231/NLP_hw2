@@ -12,10 +12,10 @@ import matplotlib.pyplot as plt
 from src.data.tokenizer import Tokenizer
 from src.data.dataloader import ContinuousDataLoader, ShuffledDataLoader
 from src.utils import readData, readEmbedding, getEmbeddingPath, calculatePPL
-from src.models import LSTMModel, RNNModel
+from src.models import LSTMModel, RNNModel, LockedDropoutLSTMModel
 
-def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], validDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int, numEpochs: int, useRNN: bool):
-    modelName = 'rnn' if useRNN else 'lstm'
+def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], validDataLoader: Union[ContinuousDataLoader, ShuffledDataLoader], optimizer: torch.optim.Optimizer, criterion: torch.nn.Module, tokenizer: Tokenizer, batchCase: int, numEpochs: int, modelName: str):
+    # modelName = 'rnn' if useRNN else 'lstm'
     bestValidPPL = float("inf")
     
     trainLossList = []
@@ -39,10 +39,12 @@ def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, Shuffle
                 y = y.to(model.device)
                 if batchCase != 3:
                     h = model.initHidden(trainDataLoader.batchSize)
-                if useRNN:
+                if modelName == 'rnn':
                     h = h.detach()
-                else:
+                elif modelName == 'lstm':
                     h = (h[0].detach(), h[1].detach())
+                else:
+                    h = [(hlayer[0].detach(), hlayer[1].detach()) for hlayer in h]
                 output, h = model(x, h)
                 loss: torch.Tensor = criterion(output.view(-1, len(tokenizer)), y.view(-1))
                 loss.backward()
@@ -66,10 +68,7 @@ def train(model: LSTMModel, trainDataLoader: Union[ContinuousDataLoader, Shuffle
         validPPLList.append(validPPL)
         if validPPL < bestValidPPL:
             bestValidPPL = validPPL
-            if useRNN:
-                torch.save(model.state_dict(), f"checkpoint/{modelName}_case{batchCase}.best.pt")
-            else:
-                torch.save(model.state_dict(), f"checkpoint/{modelName}_case{batchCase}.best.pt")
+            torch.save(model.state_dict(), f"checkpoint/{modelName}_case{batchCase}.best.pt")
             logger.success("Model saved")
         
     # draw loss and ppl curve
@@ -184,7 +183,7 @@ def generate(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, testPath: 
 def getParsedArgs():
     parser = ArgumentParser()
     parser.add_argument("--evalOnly", action="store_true", default=False)
-    parser.add_argument("--useRNN", action="store_true", default=False)
+    parser.add_argument("--modelName", type=str, choices=['rnn', 'lstm', 'locked'], default='lstm')
     parser.add_argument("--batchCase", type=int, choices=[1, 2, 3], default=1)
     parser.add_argument("--batchSize", type=int, default=4)
     parser.add_argument("--sequenceLength", type=int, default=128)
@@ -199,32 +198,18 @@ def getParsedArgs():
     return args
 
 def main():
-    logger.remove()
-    logger.add(sys.stderr, level="INFO")
-    logger.add(f"log/lstmTest" + "_{time:YYYY-MM-DD:HH:mm:ss}.log", rotation="500 MB", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
-    
     args = getParsedArgs()
+    logger.remove()
+    logger.add(sys.stderr, level="DEBUG")
+    logger.add(f"log/{args.modelName}Test" + "_{time:YYYY-MM-DD:HH:mm:ss}.log", rotation="500 MB", level="INFO", format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
+    
     logger.info(args)
-    
-    # evalOnly = False
-    # useRNN = False
-    
     # # batchCase = 1 # Use shuffled batching, and set the first hidden state as a zero vector.
     # # batchCase = 2 # Use continuous batching, and set the first hidden state as a zero vector.
     # # batchCase = 3 # Use continuous batching, and use the last hidden state of the previous batch as the first hidden state of the current batch.
     
-    # batchSize = 4
-    # sequenceLength = 128
-    # embeddingDim = 300
-    # embeddingScale = 42
-    # hiddenDim = 256
-    # numLayers = 4
-    # learningRate = 0.0005
-    # numEpochs = 15
-    # cudaID = 7
-    
     evalOnly = args.evalOnly
-    useRNN = args.useRNN
+    modelName = args.modelName
     
     batchCase = args.batchCase
     
@@ -266,10 +251,12 @@ def main():
         trainDataLoader = ShuffledDataLoader(tokenizedTrainData, batchSize, sequenceLength, shuffle=True)
         validDataLoader = ShuffledDataLoader(tokenizedValidData, batchSize, sequenceLength, shuffle=False)
         testDataLoader = ShuffledDataLoader(tokenizedTestData, batchSize, sequenceLength, shuffle=False)
-    if useRNN:
+    if modelName == 'rnn':
         model = RNNModel(len(tokenizer), embeddingDim, hiddenDim, numLayers)
-    else:
+    elif modelName == 'lstm':
         model = LSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers)
+    else:
+        model = LockedDropoutLSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers, dropoutw=0.1)
     model.to(device)
     model.device = device
     logger.info(model)
@@ -283,15 +270,17 @@ def main():
         
         optimizer = Adam(model.parameters(), lr=learningRate)
         
-        train(model, trainDataLoader, validDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs, useRNN)
+        train(model, trainDataLoader, validDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs, modelName)
     
-    if useRNN:
+    if modelName == 'rnn':
         model.load_state_dict(torch.load(f"checkpoint/rnn_case{batchCase}.best.pt"))
-    else:
+    elif modelName == 'lstm':
         model.load_state_dict(torch.load(f"checkpoint/lstm_case{batchCase}.best.pt"))
+    else:
+        model.load_state_dict(torch.load(f"checkpoint/lockedlstm_case{batchCase}.best.pt"))
     evaluate(model, testDataLoader, criterion, tokenizer, batchCase, test=True)
     predict(model, tokenizer, "you want to eat a")
-    generate(model, tokenizer, testPath)
+    # generate(model, tokenizer, testPath)
     
 if __name__ == "__main__":
     main()

@@ -6,7 +6,7 @@ from loguru import logger
 from typing import List, Dict
 
 class WeightDrop(nn.Module):
-    def __init__(self, module: nn.Module, weights: List[str], dropout: float = 0.1):
+    def __init__(self, module: nn.Module, weights: List[str], dropout: float):
         super().__init__()
         self.module = module
         self.weights = weights
@@ -34,7 +34,7 @@ class WeightDrop(nn.Module):
         return self.module.forward(*args)
 
 class LockedDropoutLSTMModel(nn.Module):
-    def __init__(self, vocabSize, embeddingDim, hiddenDim, numLayers, dropoutw=0.1):
+    def __init__(self, vocabSize, embeddingDim, hiddenDim, numLayers, dropoutw):
         super().__init__()
         self.vocabSize = vocabSize
         self.embeddingDim = embeddingDim

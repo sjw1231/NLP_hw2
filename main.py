@@ -150,8 +150,31 @@ def predict(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, text: str =
         prediction = torch.argmax(logit).item()
         text += ' ' + tokenizer.detokenize(prediction)
     logger.info(f"Prediction: {text}")
-    
-def generate(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, testPath: str):
+
+@torch.no_grad()  
+def generateOneSentence(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, text: str, lenSen: int):
+    model.eval()
+    sentence = tokenizer(text)
+    while True:
+        if sentence[-1] == tokenizer.eosToken or len(sentence) > lenSen:
+            break
+        input = torch.tensor(sentence, dtype=torch.long)[None, :]
+        input = input.to(model.device)
+        h = model.initHidden(input.shape[0])
+        output, h = model(input, h)
+        logits = output[0, -1, :]
+        value, indice = torch.topk(logits, 40)
+        value = torch.softmax(value, dim=0)
+        predictID = torch.multinomial(value, 1).item()
+        sentence.append(indice[predictID].item())
+        
+    sentence = sentence[:-1] if sentence[-1] == tokenizer.eosToken else sentence
+    text = tokenizer.detokenize(sentence)
+    return text
+
+@torch.no_grad()
+def generate(model: Union[LSTMModel, RNNModel], criterion: torch.nn.Module, tokenizer: Tokenizer, testPath: str):
+    model.eval()
     with open(testPath, 'r') as f:
         testData = f.read().split('\n')
     testData = [sentence.split() for sentence in testData]
@@ -160,6 +183,8 @@ def generate(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, testPath: 
     testData = [tokenizer(sentence) for sentence in testData]
     
     genData = []
+    lossList = []
+    pplList = []
     for sentence in tqdm(testData):
         while True:
             if sentence[-1] == tokenizer.eosToken or len(sentence) >= 20:
@@ -175,7 +200,24 @@ def generate(model: Union[LSTMModel, RNNModel], tokenizer: Tokenizer, testPath: 
             predictID = torch.multinomial(value, 1).item()
             sentence.append(indice[predictID].item())
         sentence = sentence[:-1] if sentence[-1] == tokenizer.eosToken else sentence
+        
+        h = model.initHidden(1)
+        input = torch.tensor(sentence[:-1], dtype=torch.long)[None, :]
+        input = input.to(model.device)
+        output, h = model(input, h)
+        target = torch.tensor(sentence[1:], dtype=torch.long)[None, :]
+        target = target.to(model.device)
+        loss: torch.Tensor = criterion(output.view(-1, len(tokenizer)), target.view(-1))
+        lossList.append(loss.item())
+        
+        ppl = calculatePPL(output, target)
+        pplList.append(ppl.detach().cpu())
         genData.append(tokenizer.detokenize(sentence))
+    
+    pplList = torch.cat(pplList)
+    meanPPL = torch.mean(pplList).item()
+    logger.info(f"Average generation loss: {sum(lossList) / len(lossList)}")
+    logger.info(f"Average generation ppl: {meanPPL}")
     
     with open("data/penn-treebank/ptb.test.gen.txt", 'w') as f:
         f.write('\n'.join(genData))
@@ -193,6 +235,7 @@ def getParsedArgs():
     parser.add_argument("--numLayers", type=int, default=4)
     parser.add_argument("--learningRate", type=float, default=0.0005)
     parser.add_argument("--numEpochs", type=int, default=15)
+    parser.add_argument("--dropoutw", type=float, default=0.1)
     parser.add_argument("--cudaID", type=int, choices=range(10), default=7)
     args = parser.parse_args()
     return args
@@ -221,6 +264,7 @@ def main():
     numLayers = args.numLayers
     learningRate = args.learningRate
     numEpochs = args.numEpochs
+    dropoutw = args.dropoutw
     cudaID = args.cudaID
     
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cudaID)
@@ -256,7 +300,7 @@ def main():
     elif modelName == 'lstm':
         model = LSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers)
     else:
-        model = LockedDropoutLSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers, dropoutw=0.1)
+        model = LockedDropoutLSTMModel(len(tokenizer), embeddingDim, hiddenDim, numLayers, dropoutw)
     model.to(device)
     model.device = device
     logger.info(model)
@@ -272,15 +316,15 @@ def main():
         
         train(model, trainDataLoader, validDataLoader, optimizer, criterion, tokenizer, batchCase, numEpochs, modelName)
     
-    if modelName == 'rnn':
-        model.load_state_dict(torch.load(f"checkpoint/rnn_case{batchCase}.best.pt"))
-    elif modelName == 'lstm':
-        model.load_state_dict(torch.load(f"checkpoint/lstm_case{batchCase}.best.pt"))
-    else:
-        model.load_state_dict(torch.load(f"checkpoint/lockedlstm_case{batchCase}.best.pt"))
-    evaluate(model, testDataLoader, criterion, tokenizer, batchCase, test=True)
-    predict(model, tokenizer, "you want to eat a")
-    # generate(model, tokenizer, testPath)
+    model.load_state_dict(torch.load(f"checkpoint/{modelName}_case{batchCase}.best.pt"))
+    # evaluate(model, testDataLoader, criterion, tokenizer, batchCase, test=True)
+    # predict(model, tokenizer, "you want to eat a")
+    # generate(model, criterion, tokenizer, testPath)
+    while True:
+        text = input("Input a sentence prefix: ")
+        if text == 'exit':
+            break
+        print(generateOneSentence(model, tokenizer, text, 30))
     
 if __name__ == "__main__":
     main()

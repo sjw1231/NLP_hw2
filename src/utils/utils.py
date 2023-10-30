@@ -1,4 +1,6 @@
 import torch
+import random
+import numpy as np
 from tqdm import tqdm
 from ..data.tokenizer import Tokenizer
 from .. import EMBEDDING_6B_PATH, EMBEDDING_42B_PATH
@@ -48,3 +50,12 @@ def calculatePPL(output: torch.Tensor, target: torch.Tensor):
     entropy = torch.gather(logProbs, dim=-1, index=target.unsqueeze(-1)).squeeze(-1) # [batchSize, sequenceLength]
     ppl = torch.exp(-entropy.mean(dim=-1)) # [batchSize]
     return ppl
+
+def setSeeds(seed: int):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    np.random.seed(seed)
+    random.seed(seed)

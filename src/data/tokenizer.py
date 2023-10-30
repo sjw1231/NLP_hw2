@@ -6,7 +6,7 @@ class Tokenizer:
         self.vocab = set()
         self.word2idx = {}
         self.idx2word = {}
-        self.vocab_size = 0
+        self.vocabSize = 0
         self.build_vocab()
 
     def build_vocab(self) -> None:
@@ -15,7 +15,7 @@ class Tokenizer:
                 if word == 'N':
                     word = '<num>'
                 self.vocab.add(word)
-        self.vocab_size = len(self.vocab)
+        self.vocabSize = len(self.vocab)
         self.vocab = sorted(self.vocab)
         self.word2idx = {word: idx for idx, word in enumerate(self.vocab)}
         self.idx2word = {idx: word for idx, word in enumerate(self.vocab)}
@@ -37,4 +37,4 @@ class Tokenizer:
         return self.tokenize(sentence)
 
     def __len__(self) -> int:
-        return self.vocab_size
+        return self.vocabSize

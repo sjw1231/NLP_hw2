@@ -2,6 +2,9 @@ data/*
 !src/data
 checkpoint/*
 img/*
+output/*
 embeddings/*
+scripts/oldtrain.sh
 log
+oldmain.py
 __pycache__

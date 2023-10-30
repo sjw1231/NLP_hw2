@@ -11,17 +11,23 @@ class LSTMModel(nn.Module):
     #     parser.add_argument("--hiddenDim", type=int, default=64)
     #     parser.add_argument("--numLayers", type=int, default=2)
     
-    def __init__(self, vocabSize, embeddingDim, hiddenDim, numLayers):
+    def __init__(self, vocabSize, embeddingDim, hiddenDim, numLayers, activate: str='tanh'):
         super().__init__()
         self.vocabSize = vocabSize
         self.embeddingDim = embeddingDim
         self.hiddenDim = hiddenDim
         self.numLayers = numLayers
+        self.activate = activate
         self.device: torch.device
     
         self.embedding = nn.Embedding(vocabSize, embeddingDim)
         self.dropout = nn.Dropout(0.1)
-        self.activation = nn.Tanh()
+        if activate == 'leakyrelu':
+            self.activation = nn.LeakyReLU()
+        elif activate == 'gelu':
+            self.activation = nn.GELU()
+        elif activate == 'tanh':
+            self.activation = nn.Tanh()
         self.lstm = nn.LSTM(embeddingDim, hiddenDim, numLayers, batch_first=True)
         self.linear = nn.Linear(hiddenDim, vocabSize)
         self.init_weights()
